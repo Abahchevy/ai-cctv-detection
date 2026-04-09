@@ -1,0 +1,9 @@
+{
+  "python.formatting.provider": "black",
+  "python.formatting.blackArgs": ["--line-length", "100"],
+  "editor.formatOnSave": true,
+  "editor.rulers": [100],
+  "python.linting.enabled": true,
+  "python.linting.pylintEnabled": true,
+  "python.analysis.typeCheckingMode": "basic"
+}
