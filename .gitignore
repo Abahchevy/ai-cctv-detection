@@ -14,3 +14,12 @@ __pycache__/
 
 # OS
 .DS_Store
+
+# AI models (large binary files)
+models/
+*.pt
+
+# Runtime data
+evidence/
+inspection_ai.db
+webcam_test.jpg
