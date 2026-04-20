@@ -3,8 +3,8 @@
 # For a PPE-specific model, download from Hugging Face and set the local path:
 #   https://huggingface.co/keremberke/yolov8m-hard-hat-detection
 model:
-  path: "models/best.pt"      # keremberke/yolov8m-hard-hat-detection (classes: helmet, head, person)
-  confidence: 0.40
+  path: "yolov8m.pt"      # Use generic YOLOv8m instead (will download auto)
+  confidence: 0.25
   device: "cpu"             # Set to 'cuda' if an NVIDIA GPU is available
   enable_tracking: false   # Disabled: 'lap' module unavailable behind corporate proxy
 

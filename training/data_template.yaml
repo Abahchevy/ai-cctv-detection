@@ -1,0 +1,16 @@
+# YOLOv8 Dataset Configuration
+# Copy this to dataset/data.yaml after you label your data
+
+path: C:/Users/linab/Desktop/inspection-ai/training/dataset  # dataset root
+train: images/train  # train images (relative to 'path')
+val: images/val      # val images (relative to 'path')
+test: images/test    # test images (optional)
+
+# Number of classes
+nc: 3
+
+# Class names - UPDATE THESE BASED ON YOUR LABELS
+names:
+  0: hard_hat
+  1: safety_vest
+  2: safety_gloves
