@@ -1,0 +1,555 @@
+/**
+ * PPE Compliance System — Zone Configuration UI
+ * style.css
+ *
+ * Styling for the zone configuration admin interface with live camera preview.
+ * Provides responsive layout with focus on usability, readability, and user confidence.
+ *
+ * Sections:
+ * - Reset and base styles
+ * - Page layout (container, header)
+ * - Live camera preview (new section)
+ * - Forms and inputs
+ * - Buttons
+ * - Alerts
+ * - Configuration preview
+ * - Responsive design
+ * - Accessibility
+ */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.container {
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    max-width: 700px;
+    width: 100%;
+    padding: 40px;
+}
+
+header {
+    margin-bottom: 30px;
+}
+
+header h1 {
+    font-size: 28px;
+    color: #2d3748;
+    margin-bottom: 8px;
+}
+
+header p {
+    color: #718096;
+    font-size: 14px;
+}
+
+/* ---------------------------------------------------------------------------
+ * LIVE CAMERA PREVIEW SECTION
+ * ---------------------------------------------------------------------------
+ *
+ * This section shows live video from the selected camera.
+ * It's positioned before the form to guide users through the workflow:
+ * 1. See the camera is working (visual confirmation)
+ * 2. Choose a zone type
+ * 3. Create the zone
+ *
+ * Purpose: Build confidence that the camera setup is correct before
+ * committing to zone configuration.
+ */
+
+.preview-section {
+    margin-bottom: 40px;
+    padding-bottom: 30px;
+    border-bottom: 2px solid #e2e8f0;
+}
+
+.preview-header {
+    margin-bottom: 16px;
+}
+
+.preview-header h2 {
+    font-size: 18px;
+    color: #2d3748;
+    margin-bottom: 6px;
+    font-weight: 600;
+}
+
+.preview-help {
+    font-size: 13px;
+    color: #718096;
+    margin-bottom: 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * PREVIEW CONTAINER
+ *
+ * Holds the video stream, loading spinner, and error message.
+ * Uses flexbox to center content and maintains aspect ratio.
+ */
+
+.preview-container {
+    position: relative;
+    background: #1a202c;
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 16 / 9;
+    max-width: 100%;
+    box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+/*
+ * LOADING STATE
+ *
+ * Shown while connecting to camera stream.
+ * Displays animated spinner + helpful message.
+ */
+
+.preview-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    color: #cbd5e0;
+    font-size: 14px;
+}
+
+.preview-loading p {
+    margin: 0;
+}
+
+/* Animated spinner */
+.spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid rgba(102, 126, 234, 0.2);
+    border-top-color: #667eea;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/*
+ * ERROR STATE
+ *
+ * Shown when stream fails to connect.
+ * Provides troubleshooting guidance and retry button.
+ */
+
+.preview-error {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 24px;
+    text-align: center;
+    color: #fed7d7;
+}
+
+.preview-error p {
+    margin: 0;
+}
+
+.preview-error p:first-child {
+    font-weight: 600;
+    font-size: 15px;
+}
+
+#errorMessage {
+    font-size: 11px !important;
+    color: #fc8181 !important;
+    line-height: 1.5;
+    max-width: 320px;
+}
+
+/*
+ * STREAM VIDEO
+ *
+ * The actual MJPEG stream from /stream/{camera_id}
+ * Uses object-fit: cover to maintain aspect ratio
+ */
+
+.preview-stream {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: none;
+}
+
+/*
+ * STREAM STATUS INDICATOR
+ *
+ * Shows "● Live" badge when stream is active.
+ * Appears below the video container.
+ */
+
+.stream-status {
+    display: none;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+    font-size: 12px;
+    color: #718096;
+}
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.status-active {
+    background: #c6f6d5;
+    color: #22543d;
+}
+
+.stream-info {
+    font-size: 12px;
+    color: #718096;
+}
+
+/* ---------------------------------------------------------------------------
+ * RETRY BUTTON
+ *
+ * Styled to match the action buttons but appears in the error container.
+ */
+
+.btn-retry {
+    padding: 10px 16px;
+    background: #667eea;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-retry:hover {
+    background: #764ba2;
+    transform: translateY(-1px);
+}
+
+.btn-retry:active {
+    transform: translateY(0);
+}
+
+/* ---------------------------------------------------------------------------
+ * FORM STYLES
+ * ---------------------------------------------------------------------------
+ */
+
+.form-section {
+    margin-bottom: 24px;
+}
+
+.form-section label {
+    display: block;
+    font-weight: 600;
+    color: #2d3748;
+    margin-bottom: 8px;
+    font-size: 14px;
+}
+
+.form-section select,
+.form-section input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 2px solid #e2e8f0;
+    border-radius: 6px;
+    font-size: 14px;
+    transition: all 0.3s ease;
+    background: white;
+}
+
+.form-section select:focus,
+.form-section input:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.form-section select {
+    cursor: pointer;
+}
+
+.form-section select option {
+    padding: 8px;
+}
+
+/* Help text */
+.help-text {
+    font-size: 12px;
+    color: #718096;
+    margin-top: 4px;
+}
+
+/* Zone type description */
+.zone-description {
+    background: #f7fafc;
+    border-left: 3px solid #667eea;
+    padding: 12px;
+    border-radius: 4px;
+    margin-top: 8px;
+    font-size: 13px;
+    color: #4a5568;
+    display: none;
+}
+
+.zone-description.visible {
+    display: block;
+}
+
+.ppe-list {
+    margin-top: 8px;
+    padding-left: 20px;
+}
+
+.ppe-list li {
+    list-style: none;
+    font-size: 12px;
+    color: #4a5568;
+    margin-bottom: 4px;
+}
+
+.ppe-list li:before {
+    content: "✓ ";
+    color: #48bb78;
+    font-weight: bold;
+    margin-right: 6px;
+}
+
+/* ---------------------------------------------------------------------------
+ * BUTTONS
+ * ---------------------------------------------------------------------------
+ */
+
+.button-group {
+    display: flex;
+    gap: 12px;
+    margin-top: 32px;
+}
+
+button {
+    flex: 1;
+    padding: 12px 20px;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+}
+
+.btn-primary:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.btn-primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.btn-secondary {
+    background: #e2e8f0;
+    color: #2d3748;
+}
+
+.btn-secondary:hover {
+    background: #cbd5e0;
+}
+
+/* ---------------------------------------------------------------------------
+ * ALERTS (Status messages)
+ * ---------------------------------------------------------------------------
+ */
+
+.alert {
+    padding: 12px 16px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+    font-size: 14px;
+    display: none;
+}
+
+.alert.visible {
+    display: block;
+}
+
+.alert-success {
+    background: #c6f6d5;
+    color: #22543d;
+    border: 1px solid #9ae6b4;
+}
+
+.alert-error {
+    background: #fed7d7;
+    color: #742a2a;
+    border: 1px solid #fc8181;
+}
+
+.alert-info {
+    background: #bee3f8;
+    color: #2c5282;
+    border: 1px solid #90cdf4;
+}
+
+.alert-icon {
+    margin-right: 8px;
+    font-weight: bold;
+}
+
+/* ---------------------------------------------------------------------------
+ * CONFIGURATION PREVIEW
+ * ---------------------------------------------------------------------------
+ */
+
+.config-preview {
+    background: #f7fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 16px;
+    margin-top: 20px;
+    font-size: 13px;
+    display: none;
+}
+
+.config-preview.visible {
+    display: block;
+}
+
+.config-preview h3 {
+    color: #2d3748;
+    font-size: 13px;
+    margin-bottom: 12px;
+    font-weight: 600;
+}
+
+.config-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.config-item:last-child {
+    border-bottom: none;
+}
+
+.config-item strong {
+    color: #4a5568;
+}
+
+.config-item span {
+    color: #718096;
+    text-align: right;
+}
+
+/* ---------------------------------------------------------------------------
+ * RESPONSIVE DESIGN
+ *
+ * Adapt layout for mobile and tablet screens
+ * ---------------------------------------------------------------------------
+ */
+
+@media (max-width: 600px) {
+    .container {
+        padding: 24px;
+    }
+
+    header h1 {
+        font-size: 22px;
+    }
+
+    .button-group {
+        flex-direction: column;
+    }
+
+    button {
+        width: 100%;
+    }
+
+    /* Adjust preview for smaller screens */
+    .preview-container {
+        aspect-ratio: 4 / 3;
+    }
+
+    .preview-section {
+        margin-bottom: 30px;
+        padding-bottom: 24px;
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * ACCESSIBILITY
+ *
+ * Respect user motion preferences
+ * ---------------------------------------------------------------------------
+ */
+
+@media (prefers-reduced-motion: reduce) {
+    * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * PRINT STYLES
+ * ---------------------------------------------------------------------------
+ */
+
+@media print {
+    body {
+        background: white;
+    }
+
+    .container {
+        box-shadow: none;
+        max-width: 100%;
+    }
+
+    button {
+        display: none;
+    }
+
+    .preview-container {
+        display: none;
+    }
+}

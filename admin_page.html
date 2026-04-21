@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <!--
+    PPE Compliance System — Admin Zone Configuration Base Template
+
+    This is the base template that other pages extend.
+    Provides common structure, styling, and JavaScript utilities.
+    -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zone Configuration — Inspection AI</title>
+
+    <!-- Styling -->
+    <link rel="stylesheet" href="http://localhost:8000/static/css/style.css">
+
+    <!-- Additional block for page-specific styles -->
+    
+</head>
+
+<body>
+    <!-- Main content container -->
+    <div class="container">
+        <!-- Header section -->
+        <header>
+            
+            <h1>🔧 Zone Configuration</h1>
+            <p>Create PPE compliance zones for your cameras</p>
+            
+        </header>
+
+        <!-- Alert messages (success, error, info) -->
+        <div id="alerts-container"></div>
+
+        <!-- Main content block -->
+        
+
+<!--
+Live Camera Preview Section
+
+This section displays a real-time MJPEG stream from the selected camera.
+The stream is updated immediately when the user changes the camera selection.
+
+How it works:
+1. User selects a camera from the dropdown
+2. JavaScript updates the <img src> to point to /stream/{camera_id}
+3. Browser continuously fetches JPEG frames from the MJPEG endpoint
+4. User sees live movement and can verify camera is working
+5. Once confident, they select a zone type and create the zone
+
+Performance considerations:
+- MJPEG streams are throttled to ~25 fps on the backend (see main.py line 448)
+- JPEG quality is set to 80 for balance between quality and bandwidth
+- Error recovery: if stream fails, display error message and allow retry
+- Loading state: show spinner until first frame arrives
+-->
+<div id="previewSection" class="preview-section">
+    <div class="preview-header">
+        <h2>📹 Live Camera Preview</h2>
+        <p class="preview-help">Select a camera to see live video stream. Verify the camera is working before creating a zone.</p>
+    </div>
+
+    <!-- Video stream container -->
+    <div class="preview-container">
+        <!-- Loading indicator: shown while stream is connecting -->
+        <div id="previewLoading" class="preview-loading">
+            <div class="spinner"></div>
+            <p>Connecting to camera...</p>
+        </div>
+
+        <!-- Error message: shown if stream fails to load -->
+        <div id="previewError" class="preview-error" style="display: none;">
+            <p><strong>Camera stream unavailable</strong></p>
+            <p id="errorMessage" style="font-size: 12px; color: #718096; margin-top: 8px;"></p>
+            <button type="button" class="btn-retry" onclick="retryStream()">
+                🔄 Retry Connection
+            </button>
+        </div>
+
+        <!--
+        MJPEG Stream Image Element
+
+        Key points:
+        - MJPEG is a streaming format where each HTTP "chunk" is a JPEG frame
+        - Browsers natively support MJPEG via <img src> (they continuously replace the content)
+        - The src updates when camera selection changes (see JavaScript: handleCameraChange)
+        - onload: called when first frame arrives, allowing us to hide loading spinner
+        - onerror: called if stream endpoint fails or returns error
+        -->
+        <img
+            id="previewStream"
+            class="preview-stream"
+            src=""
+            alt="Camera stream"
+            style="display: none;"
+            onload="onStreamLoaded()"
+            onerror="onStreamError()"
+        />
+    </div>
+
+    <!-- Camera status indicator -->
+    <div id="streamStatus" class="stream-status" style="display: none;">
+        <span class="status-badge status-active">● Live</span>
+        <span id="streamInfo" class="stream-info"></span>
+    </div>
+</div>
+
+<!-- Zone configuration form -->
+<form id="zoneForm">
+    <!--
+    Zone Type Selection Section
+
+    Displays available zone presets (High/Medium/Low Hazard) loaded from the backend.
+    Shows description and PPE requirements for selected zone type.
+    -->
+    <div class="form-section">
+        <label for="zoneTypeSelect">
+            Zone Type <span style="color: #e53e3e;">*</span>
+        </label>
+        <select id="zoneTypeSelect" required onchange="handleZoneTypeChange()">
+            <option value="">— Select zone type —</option>
+            <!-- Options populated by JavaScript -->
+        </select>
+        <p class="help-text">Choose the hazard level for this zone</p>
+
+        <!-- Zone type description and PPE requirements (hidden by default) -->
+        <div id="zoneDescription" class="zone-description">
+            <strong id="zoneDescriptionText"></strong>
+            <ul id="ppeMandList" class="ppe-list"></ul>
+            <p style="margin-top: 8px; font-size: 12px; color: #718096;">
+                <strong>Alert Cooldown:</strong> <span id="cooldownDisplay"></span>s
+            </p>
+        </div>
+    </div>
+
+    <!--
+    Camera Selection Section
+
+    Displays available cameras from the backend.
+    Each zone is linked to exactly one camera.
+
+    Why we listen for changes:
+    - When user selects a camera, we update the live preview stream to show that camera
+    - This happens instantly, before they commit to creating a zone
+    - They can verify the camera works before proceeding
+    -->
+    <div class="form-section">
+        <label for="cameraSelect">
+            Camera <span style="color: #e53e3e;">*</span>
+        </label>
+        <select id="cameraSelect" required onchange="handleCameraChange()">
+            <option value="">— Select camera —</option>
+            <!-- Options populated by JavaScript -->
+        </select>
+        <p class="help-text">Select which camera this zone applies to. The live preview will update instantly.</p>
+    </div>
+
+    <!--
+    Configuration Preview
+
+    Shows a summary of the configuration that will be created before user submits.
+    Updates in real-time as user makes selections.
+    -->
+    <div id="configPreview" class="config-preview">
+        <h3>📋 Configuration Preview</h3>
+        <div class="config-item">
+            <strong>Zone ID:</strong>
+            <span id="previewZoneId">—</span>
+        </div>
+        <div class="config-item">
+            <strong>Camera:</strong>
+            <span id="previewCamera">—</span>
+        </div>
+        <div class="config-item">
+            <strong>Zone Type:</strong>
+            <span id="previewZoneType">—</span>
+        </div>
+        <div class="config-item">
+            <strong>Required PPE:</strong>
+            <span id="previewPPE">—</span>
+        </div>
+    </div>
+
+    <!--
+    Form Action Buttons
+
+    Submit button sends form data to backend to create zone.
+    Reset button clears all selections.
+    -->
+    <div class="button-group">
+        <button type="submit" class="btn-primary" id="submitBtn">
+            Create Zone
+        </button>
+        <button type="reset" class="btn-secondary" id="resetBtn">
+            Clear
+        </button>
+    </div>
+</form>
+
+    </div>
+
+    <!-- JavaScript utilities -->
+    <script>
+        /**
+         * Utility Functions for Zone Configuration UI
+         *
+         * These functions handle API communication, UI updates, and state management.
+         * Designed to be minimal and easily extended for future features.
+         */
+
+        /**
+         * Display alert message to user
+         *
+         * @param {string} message - Alert text to display
+         * @param {string} type - Alert type: 'success', 'error', or 'info'
+         * @param {number} duration - Auto-dismiss after N milliseconds (0 = no auto-dismiss)
+         */
+        function showAlert(message, type = 'info', duration = 5000) {
+            const container = document.getElementById('alerts-container');
+            const alertDiv = document.createElement('div');
+
+            // Map alert types to icons
+            const icons = {
+                'success': '✅',
+                'error': '❌',
+                'info': 'ℹ️'
+            };
+
+            alertDiv.className = `alert alert-${type} visible`;
+            alertDiv.innerHTML = `
+                <span class="alert-icon">${icons[type]}</span>
+                <span>${message}</span>
+            `;
+
+            container.appendChild(alertDiv);
+
+            // Auto-dismiss if duration > 0
+            if (duration > 0) {
+                setTimeout(() => {
+                    alertDiv.remove();
+                }, duration);
+            }
+
+            // Scroll to alert
+            alertDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        /**
+         * Make API request with error handling
+         *
+         * @param {string} url - API endpoint URL
+         * @param {object} options - Fetch options (method, headers, body, etc.)
+         * @returns {Promise} Response JSON if successful, throws error otherwise
+         */
+        async function apiRequest(url, options = {}) {
+            try {
+                const response = await fetch(url, {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    },
+                    ...options
+                });
+
+                if (!response.ok) {
+                    const error = await response.json().catch(() => ({}));
+                    throw new Error(error.detail || `HTTP ${response.status}`);
+                }
+
+                // Handle empty responses (e.g., 204 No Content)
+                if (response.status === 204) {
+                    return null;
+                }
+
+                return await response.json();
+            } catch (error) {
+                console.error('API request failed:', error);
+                showAlert(`Error: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        /**
+         * Disable all form inputs
+         *
+         * Useful during loading/submission to prevent double-submission
+         *
+         * @param {boolean} disabled - Set disabled state
+         */
+        function setFormDisabled(disabled) {
+            const inputs = document.querySelectorAll('select, input[type="text"], button');
+            inputs.forEach(input => {
+                input.disabled = disabled;
+            });
+        }
+
+        /**
+         * Update button loading state
+         *
+         * Shows spinner while loading, restores text when done
+         *
+         * @param {HTMLElement} button - Button element to update
+         * @param {boolean} isLoading - Loading state
+         */
+        function setButtonLoading(button, isLoading) {
+            if (isLoading) {
+                button.dataset.originalText = button.textContent;
+                button.innerHTML = '<span class="loading"></span>Creating...';
+                button.disabled = true;
+            } else {
+                button.textContent = button.dataset.originalText || 'Create Zone';
+                button.disabled = false;
+            }
+        }
+
+        /**
+         * Format zone type name for display
+         *
+         * @param {string} name - Zone type name
+         * @returns {string} Formatted name with description
+         */
+        function formatZoneType(name, description = '') {
+            return description ? `${name} — ${description}` : name;
+        }
+    </script>
+
+    <!-- Page-specific scripts block -->
+    
+<script>
+    /**
+     * Zone Configuration Admin Page
+     *
+     * Handles:
+     * - Live camera preview via MJPEG streaming
+     * - Loading cameras and zone presets from API
+     * - Rendering dropdown options
+     * - Stream URL updates when camera selection changes
+     * - Form submission to create zones
+     * - Real-time configuration preview
+     * - User feedback and error handling
+     */
+
+    // Global state
+    let zonePresets = {};  // Populated from GET /zone-presets
+    let cameras = [];      // Populated from GET /cameras
+    let currentStreamCamera = null;  // Track which camera stream is currently displayed
+
+    /**
+     * Initialize the admin page
+     *
+     * Called on page load. Fetches cameras and zone presets from backend.
+     */
+    async function initPage() {
+        try {
+            // Load zone presets from backend
+            zonePresets = await apiRequest('/zone-presets');
+            populateZoneTypeDropdown();
+
+            // Load cameras from backend
+            cameras = await apiRequest('/cameras');
+            populateCameraDropdown();
+
+            showAlert('Page loaded successfully', 'success', 2000);
+        } catch (error) {
+            showAlert('Failed to load page data', 'error', 0);
+            setFormDisabled(true);
+        }
+    }
+
+    /**
+     * Populate zone type dropdown with preset options
+     *
+     * Creates option elements from ZONE_PRESETS data structure.
+     * Each option includes the preset name and description.
+     */
+    function populateZoneTypeDropdown() {
+        const select = document.getElementById('zoneTypeSelect');
+
+        Object.entries(zonePresets).forEach(([name, preset]) => {
+            const option = document.createElement('option');
+            option.value = name;
+            option.textContent = formatZoneType(name, preset.description);
+            select.appendChild(option);
+        });
+    }
+
+    /**
+     * Populate camera dropdown with available cameras
+     *
+     * Creates option elements from cameras list.
+     * Includes camera name and status (enabled/disabled).
+     */
+    function populateCameraDropdown() {
+        const select = document.getElementById('cameraSelect');
+
+        cameras.forEach(camera => {
+            const option = document.createElement('option');
+            option.value = camera.id;
+            const status = camera.enabled ? '✓' : '✗';
+            option.textContent = `${camera.id} — ${camera.name} [${status}]`;
+            select.appendChild(option);
+        });
+    }
+
+    /**
+     * Handle zone type selection change
+     *
+     * Updates the description panel and configuration preview.
+     * Called whenever user selects a different zone type.
+     */
+    function handleZoneTypeChange() {
+        const select = document.getElementById('zoneTypeSelect');
+        const selectedType = select.value;
+
+        if (!selectedType) {
+            // Clear description if nothing selected
+            document.getElementById('zoneDescription').classList.remove('visible');
+            updateConfigPreview();
+            return;
+        }
+
+        // Get preset data for selected type
+        const preset = zonePresets[selectedType];
+
+        // Update description section
+        document.getElementById('zoneDescriptionText').textContent = preset.description;
+        document.getElementById('cooldownDisplay').textContent = preset.alert_cooldown_seconds;
+
+        // Update PPE list
+        const ppeLi = document.getElementById('ppeMandList');
+        ppeLi.innerHTML = '';
+        preset.required_ppe.forEach(ppe => {
+            const li = document.createElement('li');
+            li.textContent = ppe.replace(/_/g, ' ');
+            ppeLi.appendChild(li);
+        });
+
+        // Show description
+        document.getElementById('zoneDescription').classList.add('visible');
+
+        // Update preview
+        updateConfigPreview();
+    }
+
+    /**
+     * Update the configuration preview section
+     *
+     * Shows what will be created based on current form selections.
+     * Updates in real-time as user makes changes.
+     */
+    function updateConfigPreview() {
+        const cameraId = document.getElementById('cameraSelect').value;
+        const zoneType = document.getElementById('zoneTypeSelect').value;
+
+        if (!cameraId || !zoneType) {
+            document.getElementById('configPreview').classList.remove('visible');
+            return;
+        }
+
+        // Generate zone ID (format: {camera_id}-{zone_type_slug})
+        const zoneSlug = zoneType.toLowerCase().replace(/\s+/g, '-');
+        const zoneId = `${cameraId}-${zoneSlug}`;
+
+        // Get preset data
+        const preset = zonePresets[zoneType];
+        const ppeList = preset.required_ppe.join(', ').replace(/_/g, ' ');
+
+        // Get camera name
+        const camera = cameras.find(c => c.id === cameraId);
+        const cameraName = camera ? camera.name : cameraId;
+
+        // Update preview elements
+        document.getElementById('previewZoneId').textContent = zoneId;
+        document.getElementById('previewCamera').textContent = `${cameraId} (${cameraName})`;
+        document.getElementById('previewZoneType').textContent = zoneType;
+        document.getElementById('previewPPE').textContent = ppeList;
+
+        // Show preview
+        document.getElementById('configPreview').classList.add('visible');
+    }
+
+    /**
+     * Handle form submission
+     *
+     * Sends zone creation request to backend API.
+     * Shows loading state, handles response, displays feedback.
+     *
+     * @param {Event} event - Form submit event
+     */
+    document.getElementById('zoneForm').addEventListener('submit', async (event) => {
+        event.preventDefault();
+
+        const cameraId = document.getElementById('cameraSelect').value;
+        const zoneType = document.getElementById('zoneTypeSelect').value;
+
+        if (!cameraId || !zoneType) {
+            showAlert('Please select both camera and zone type', 'error');
+            return;
+        }
+
+        const submitBtn = document.getElementById('submitBtn');
+        setButtonLoading(submitBtn, true);
+        setFormDisabled(true);
+
+        try {
+            // Send zone creation request to backend
+            const result = await apiRequest('/zones', {
+                method: 'POST',
+                body: JSON.stringify({
+                    camera_id: cameraId,
+                    zone_type: zoneType
+                })
+            });
+
+            // Success
+            showAlert(
+                `✨ Zone created successfully: ${result.zone_id}`,
+                'success',
+                0  // Don't auto-dismiss, let user see it
+            );
+
+            // Reset form
+            document.getElementById('zoneForm').reset();
+            document.getElementById('zoneDescription').classList.remove('visible');
+            document.getElementById('configPreview').classList.remove('visible');
+
+            // Show next steps
+            setTimeout(() => {
+                showAlert(
+                    '💾 Remember to restart the Inspection AI service to apply changes',
+                    'info',
+                    10000
+                );
+            }, 500);
+
+        } catch (error) {
+            showAlert(
+                `Failed to create zone: ${error.message}`,
+                'error',
+                0
+            );
+        } finally {
+            setButtonLoading(submitBtn, false);
+            setFormDisabled(false);
+        }
+    });
+
+    /**
+     * Handle form reset
+     *
+     * Clear selections and hide preview when user clicks reset.
+     */
+    document.getElementById('resetBtn').addEventListener('click', () => {
+        document.getElementById('zoneDescription').classList.remove('visible');
+        document.getElementById('configPreview').classList.remove('visible');
+    });
+
+    /**
+     * Handle camera selection change
+     *
+     * Updates TWO things when user selects a different camera:
+     * 1. Configuration preview (zone configuration updates)
+     * 2. Live preview stream (they see the selected camera in real-time)
+     *
+     * This is the key function for the user experience: select camera → instantly see stream
+     */
+    function handleCameraChange() {
+        const cameraId = document.getElementById('cameraSelect').value;
+
+        // Update the configuration preview section
+        updateConfigPreview();
+
+        // Update the live video stream if a valid camera is selected
+        if (cameraId) {
+            updateCameraStream(cameraId);
+        } else {
+            // No camera selected, stop showing stream
+            stopCameraStream();
+        }
+    }
+
+    /**
+     * Update the live camera stream
+     *
+     * How it works:
+     * 1. Build stream URL: /stream/{camera_id}
+     * 2. Point the <img> element to that URL
+     * 3. Browser handles the MJPEG stream automatically
+     * 4. Show loading spinner until first frame arrives (onload callback)
+     * 5. If stream fails to load (onerror callback), show error message
+     *
+     * Why MJPEG works with <img>:
+     * - MJPEG is a series of JPEG frames sent with HTTP boundary markers
+     * - Browsers support this natively via img elements
+     * - When new frame arrives, browser updates the image automatically
+     * - Much simpler than video tag or canvas rendering
+     *
+     * @param {string} cameraId - Camera ID to stream from
+     */
+    function updateCameraStream(cameraId) {
+        // Don't update if we're already showing this camera (avoids unnecessary reconnections)
+        if (currentStreamCamera === cameraId) {
+            return;
+        }
+
+        currentStreamCamera = cameraId;
+
+        // Show loading indicator and hide error/image
+        const loadingEl = document.getElementById('previewLoading');
+        const errorEl = document.getElementById('previewError');
+        const streamEl = document.getElementById('previewStream');
+        const statusEl = document.getElementById('streamStatus');
+
+        loadingEl.style.display = 'flex';
+        errorEl.style.display = 'none';
+        streamEl.style.display = 'none';
+        statusEl.style.display = 'none';
+
+        // Build stream URL and update img src
+        // This triggers the browser to start loading the MJPEG stream
+        const streamUrl = `/stream/${encodeURIComponent(cameraId)}`;
+        streamEl.src = streamUrl;
+
+        console.log(`Connecting to camera stream: ${cameraId}`);
+    }
+
+    /**
+     * Called when first frame of MJPEG stream successfully loads
+     *
+     * Hides loading spinner and shows the live video.
+     * This gives the user visual confirmation that:
+     * 1. The camera is connected
+     * 2. The stream is working
+     * 3. They can see real-time video
+     */
+    function onStreamLoaded() {
+        const loadingEl = document.getElementById('previewLoading');
+        const streamEl = document.getElementById('previewStream');
+        const statusEl = document.getElementById('streamStatus');
+        const errorEl = document.getElementById('previewError');
+
+        // Hide loading and error states
+        loadingEl.style.display = 'none';
+        errorEl.style.display = 'none';
+
+        // Show the live stream image and status
+        streamEl.style.display = 'block';
+        statusEl.style.display = 'flex';
+
+        console.log(`Stream loaded for camera: ${currentStreamCamera}`);
+    }
+
+    /**
+     * Called when MJPEG stream fails to load or stops
+     *
+     * Displays user-friendly error message with options to retry.
+     * This happens when:
+     * - Camera processor is not running
+     * - Camera has been disconnected
+     * - Network error during streaming
+     * - Server is down
+     */
+    function onStreamError() {
+        const loadingEl = document.getElementById('previewLoading');
+        const streamEl = document.getElementById('previewStream');
+        const errorEl = document.getElementById('previewError');
+        const statusEl = document.getElementById('streamStatus');
+        const errorMessageEl = document.getElementById('errorMessage');
+
+        // Hide loading and stream
+        loadingEl.style.display = 'none';
+        streamEl.style.display = 'none';
+        statusEl.style.display = 'none';
+
+        // Show error state
+        errorEl.style.display = 'block';
+
+        // Provide specific error guidance
+        const troubleshootingTips = [
+            'Ensure the Inspection AI service is running with: `python -m src.api.main`',
+            `Verify that camera "${currentStreamCamera}" is enabled in config/cameras.yaml`,
+            `Try another camera or check the service logs for connection errors`,
+            'If the issue persists, try restarting the service'
+        ].join(' → ');
+
+        errorMessageEl.textContent = troubleshootingTips;
+
+        console.error(`Stream failed for camera: ${currentStreamCamera}`);
+    }
+
+    /**
+     * Retry connecting to the current camera stream
+     *
+     * User clicks the "Retry" button when stream fails.
+     * Simply attempt to reconnect by reloading the stream.
+     */
+    function retryStream() {
+        if (currentStreamCamera) {
+            console.log(`Retrying camera stream: ${currentStreamCamera}`);
+            updateCameraStream(currentStreamCamera);
+        }
+    }
+
+    /**
+     * Stop showing the camera stream
+     *
+     * Called when user deselects camera or resets the form.
+     * Clears the img src to free resources.
+     */
+    function stopCameraStream() {
+        const streamEl = document.getElementById('previewStream');
+        const loadingEl = document.getElementById('previewLoading');
+        const errorEl = document.getElementById('previewError');
+        const statusEl = document.getElementById('streamStatus');
+
+        currentStreamCamera = null;
+        streamEl.src = '';
+        streamEl.style.display = 'none';
+        loadingEl.style.display = 'none';
+        errorEl.style.display = 'none';
+        statusEl.style.display = 'none';
+    }
+
+    /**
+     * Reset form and cleanup streams
+     *
+     * When user clicks the "Clear" button, we also stop the stream.
+     */
+    const originalResetHandler = document.getElementById('resetBtn').onclick;
+    document.getElementById('resetBtn').addEventListener('click', () => {
+        stopCameraStream();
+        document.getElementById('zoneDescription').classList.remove('visible');
+        document.getElementById('configPreview').classList.remove('visible');
+    });
+
+    // Initialize page on load
+    document.addEventListener('DOMContentLoaded', initPage);
+</script>
+
+</body>
+
+</html>

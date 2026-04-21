@@ -1,13 +1,26 @@
 """
 FastAPI Application
 ===================
-Exposes:
-  GET  /cameras              – list configured cameras
-  GET  /violations           – paginated audit log
-  GET  /violations/{id}      – single record
-  GET  /evidence/{id}/image  – serve snapshot JPEG
-  WS   /ws/alerts            – real-time violation push over WebSocket
-  GET  /stream/{camera_id}   – MJPEG live preview (for dashboard)
+Exposes REST API and web UI for PPE Compliance System:
+
+API Endpoints:
+  GET  /                          – Root (redirects to admin panel)
+  GET  /admin                     – Zone configuration web UI
+  GET  /zone-presets              – Available zone types (for API/UI)
+  POST /zones                     – Create new zone
+  GET  /cameras                   – List configured cameras
+  GET  /violations                – Paginated violation audit log
+  GET  /violations/{id}           – Single violation detail
+  GET  /evidence/{id}/image       – Serve violation snapshot image
+  WS   /ws/alerts                 – Real-time violation alerts (WebSocket)
+  GET  /stream/{camera_id}        – MJPEG live preview (for dashboard)
+
+Static Assets:
+  GET  /static/css/*              – Stylesheets
+  GET  /static/js/*               – JavaScript files
+
+This application serves both a REST API for programmatic access and a web UI
+for non-technical users to configure zones, view violations, and manage the system.
 """
 from __future__ import annotations
 
@@ -21,8 +34,10 @@ from typing import AsyncIterator, Optional
 
 import cv2
 import yaml
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.database.session import init_db, get_session
@@ -32,6 +47,13 @@ from src.detection.zone_rules import ZoneRulesEngine
 from src.evidence.store import EvidenceStore
 from src.ingestion.stream_processor import StreamProcessor
 from src.api.schemas import ViolationOut, CameraOut
+from src.config_manager.interactive_zones import (
+    load_zones,
+    generate_zone_id,
+    create_zone_config,
+    save_zones,
+)
+from src.config_manager.presets import ZONE_PRESETS, get_zone_preset
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +167,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---------------------------------------------------------------------------
+# Template and Static Files Setup
+# ---------------------------------------------------------------------------
+# Configure Jinja2 template rendering for HTML pages
+# Templates are loaded from src/api/templates/
+api_dir = Path(__file__).parent
+templates_dir = api_dir / "templates"
+templates = Jinja2Templates(directory=str(templates_dir))
+
+# Mount static files (CSS, JavaScript, images)
+# Accessible at /static/{path}
+static_dir = api_dir / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    logger.info("Static files mounted at /static")
+else:
+    logger.warning("Static directory not found at %s", static_dir)
+
 
 # ---------------------------------------------------------------------------
 # Routes
@@ -152,11 +192,21 @@ app.add_middleware(
 
 @app.get("/")
 def root():
+    """
+    API Root Endpoint
+
+    Returns service information and available endpoints.
+    Redirects browser clients to /admin for web UI.
+    """
     return {
         "service": "Inspection AI — PPE Compliance",
         "version": "0.1.0",
         "docs": "/docs",
+        "admin_ui": "/admin",
         "endpoints": {
+            "admin_ui": "GET /admin",
+            "zone_presets": "GET /zone-presets",
+            "create_zone": "POST /zones",
             "cameras": "GET /cameras",
             "violations": "GET /violations",
             "violation_detail": "GET /violations/{id}",
@@ -165,6 +215,154 @@ def root():
             "live_stream": "GET /stream/{camera_id}",
         },
     }
+
+
+@app.get("/admin")
+def admin_page(request: Request):
+    """
+    Zone Configuration Admin Page
+
+    Serves the web UI for creating camera-specific PPE compliance zones.
+
+    The page includes:
+    - Camera selection dropdown (populated from /cameras endpoint)
+    - Zone type selection dropdown (populated from /zone-presets endpoint)
+    - Real-time configuration preview
+    - Form submission to POST /zones endpoint
+
+    This endpoint returns HTML rendered from the admin.html template.
+    JavaScript on the page handles all API interactions.
+    """
+    # Jinja2Templates.TemplateResponse requires a Request object
+    # to properly generate URLs with url_for()
+    return templates.TemplateResponse(name="admin.html", context={"request": request}, request=request)
+
+
+@app.get("/zone-presets")
+def get_zone_presets() -> dict:
+    """
+    Get Available Zone Type Presets
+
+    Returns all predefined zone types (High Hazard, Medium Hazard, Low Hazard)
+    with their configuration details.
+
+    Used by:
+    - Web UI to populate zone type dropdown
+    - API clients to display available options for zone creation
+
+    Response format:
+    {
+        "High Hazard": {
+            "description": "Maximum protection required...",
+            "required_ppe": ["hard_hat", "vest", "gloves"],
+            "alert_cooldown_seconds": 15
+        },
+        ...
+    }
+
+    Returns
+    -------
+    dict
+        Mapping of zone type name → preset configuration
+    """
+    return ZONE_PRESETS
+
+
+@app.post("/zones")
+def create_zone(camera_id: str, zone_type: str) -> dict:
+    """
+    Create New Zone
+
+    Creates a new PPE compliance zone linked to a specific camera.
+
+    The zone is generated from the selected preset and saved to config/zones.yaml.
+    After zone creation, the Inspection AI service must be restarted to load the new zone.
+
+    Parameters
+    ----------
+    camera_id : str
+        The camera this zone applies to (e.g., "cam-001")
+    zone_type : str
+        The zone type/preset name (e.g., "High Hazard")
+
+    Returns
+    -------
+    dict
+        Result containing:
+        - zone_id: Generated zone identifier
+        - status: "created"
+        - message: Confirmation message
+
+    Raises
+    ------
+    HTTPException 400
+        If camera_id or zone_type is invalid
+    HTTPException 500
+        If zone creation fails (file I/O error, etc.)
+
+    Example
+    -------
+    POST /zones?camera_id=cam-001&zone_type=High%20Hazard
+
+    Response:
+    {
+        "zone_id": "cam-001-high-hazard",
+        "status": "created",
+        "message": "Zone created successfully"
+    }
+    """
+    try:
+        # Validate camera exists
+        cameras_cfg = yaml.safe_load(Path("config/cameras.yaml").read_text())
+        camera_ids = [c["id"] for c in cameras_cfg.get("cameras", [])]
+        if camera_id not in camera_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Camera '{camera_id}' not found. Available: {camera_ids}"
+            )
+
+        # Validate zone type exists
+        preset = get_zone_preset(zone_type)
+        if preset is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Zone type '{zone_type}' not found. Available: {list(ZONE_PRESETS.keys())}"
+            )
+
+        # Generate zone configuration
+        zone_id = generate_zone_id(camera_id, zone_type)
+        zone_config = create_zone_config(camera_id, zone_type, zone_type, preset)
+
+        # Load existing zones and update
+        zones, class_map = load_zones()
+        zones[zone_id] = zone_config
+
+        # Save updated zones
+        save_zones(zones, class_map)
+
+        logger.info(
+            "Zone created via API: %s (camera=%s, type=%s)",
+            zone_id,
+            camera_id,
+            zone_type,
+        )
+
+        return {
+            "zone_id": zone_id,
+            "status": "created",
+            "message": f"Zone '{zone_id}' created successfully. Restart service to apply.",
+        }
+
+    except yaml.YAMLError as e:
+        logger.error("YAML error during zone creation: %s", e)
+        raise HTTPException(status_code=500, detail=f"Configuration error: {e}")
+    except FileNotFoundError as e:
+        logger.error("Configuration file not found: %s", e)
+        raise HTTPException(status_code=500, detail=f"Configuration file error: {e}")
+    except Exception as e:
+        logger.error("Unexpected error during zone creation: %s", e)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
+
 
 @app.get("/cameras", response_model=list[CameraOut])
 def list_cameras() -> list[CameraOut]:
