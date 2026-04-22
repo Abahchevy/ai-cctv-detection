@@ -12,9 +12,27 @@ from pydantic import BaseModel, ConfigDict, field_validator
 class CameraOut(BaseModel):
     id: str
     name: str
+    source: str
     zone_id: str
     enabled: bool
     running: bool
+
+
+class CameraCreate(BaseModel):
+    id: str
+    name: str
+    source: str
+    enabled: bool = True
+
+
+class CameraStatusUpdate(BaseModel):
+    enabled: bool
+
+
+class CameraUpdate(BaseModel):
+    name: str
+    source: str
+    enabled: bool
 
 
 class ViolationOut(BaseModel):

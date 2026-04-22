@@ -37,6 +37,14 @@ zones:
     - gloves
     alert_cooldown_seconds: 15
     camera_id: cam-002
+  cam-test-high-hazard:
+    name: "High Hazard \u2014 cam-test"
+    required_ppe:
+    - hard_hat
+    - vest
+    - gloves
+    alert_cooldown_seconds: 15
+    camera_id: cam-test
 class_map:
   helmet: hard_hat
   hard hat: hard_hat

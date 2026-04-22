@@ -1,38 +1,36 @@
-# AI model configuration
-# Use any local .pt file or 'yolov8n.pt' / 'yolov8m.pt' (auto-downloaded on first run).
-# For a PPE-specific model, download from Hugging Face and set the local path:
-#   https://huggingface.co/keremberke/yolov8m-hard-hat-detection
 model:
-  path: "yolov8m.pt"      # Use generic YOLOv8m instead (will download auto)
+  path: yolov8m.pt
   confidence: 0.25
-  device: "cpu"             # Set to 'cuda' if an NVIDIA GPU is available
-  enable_tracking: false   # Disabled: 'lap' module unavailable behind corporate proxy
-
+  device: cpu
+  enable_tracking: false
 cameras:
-  - id: cam-001
-    name: "Main Entrance"
-    uri: "rtsp://admin:password@192.168.1.101:554/stream1"
-    zone_id: zone-entry
-    fps_limit: 5          # Process N frames/sec to reduce GPU load
-    enabled: false
-
-  - id: cam-002
-    name: "Welding Bay A"
-    uri: "rtsp://admin:password@192.168.1.102:554/stream1"
-    zone_id: zone-welding
-    fps_limit: 5
-    enabled: false
-
-  - id: cam-003
-    name: "Chemical Storage"
-    uri: "rtsp://admin:password@192.168.1.103:554/stream1"
-    zone_id: zone-chemical
-    fps_limit: 5
-    enabled: false
-
-  - id: cam-test
-    name: "Local Test Feed (Webcam)"
-    uri: "0"              # Webcam index 0 — change to 1, 2, etc. if needed
-    zone_id: zone-entry
-    fps_limit: 10
-    enabled: true
+- id: cam-001
+  name: Main Entrance
+  uri: rtsp://admin:password@192.168.1.101:554/stream1
+  zone_id: zone-entry
+  fps_limit: 5
+  enabled: false
+- id: cam-002
+  name: Welding Bay A
+  uri: rtsp://admin:password@192.168.1.102:554/stream1
+  zone_id: zone-welding
+  fps_limit: 5
+  enabled: false
+- id: cam-003
+  name: Chemical Storage
+  uri: rtsp://admin:password@192.168.1.103:554/stream1
+  zone_id: zone-chemical
+  fps_limit: 5
+  enabled: false
+- id: cam-test
+  name: Local Test Feed (Webcam)
+  uri: '0'
+  zone_id: zone-entry
+  fps_limit: 10
+  enabled: true
+- id: cam-005
+  name: Petrotech
+  uri: fssf
+  zone_id: zone-entry
+  fps_limit: 5
+  enabled: true

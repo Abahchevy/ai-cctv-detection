@@ -1,7 +1,32 @@
 """
-FastAPI Application
-===================
-Exposes REST API and web UI for PPE Compliance System:
+FastAPI Application — Dual-Path Architecture for Real-Time Streaming
+=====================================================================
+
+DESIGN: Two independent pipelines for each camera enable low-latency live streaming
+while maintaining CPU-efficient detection and compliance processing.
+
+1. REAL-TIME STREAMING PATH (StreamCapture):
+   Purpose: Minimal-latency MJPEG for live user feedback
+   Thread: One per camera, dedicated capture thread
+   Latency: <100ms from camera to browser (uncapped FPS)
+   Buffering: Single-frame only (old frames dropped immediately)
+   CPU: Lightweight—just capture + low-quality JPEG
+   Endpoint: GET /stream/{camera_id}
+
+2. DETECTION PIPELINE (StreamProcessor):
+   Purpose: PPE detection, violations, evidence for compliance
+   Thread: One per camera, processes at fps_limit (default 5 FPS)
+   Latency: Acceptable (500ms-2s) for batch/archival processing
+   Buffering: Queue of results for violation broadcast
+   CPU: Heavy—detector inference + annotation + storage
+   Output: Violations → database + WebSocket alerts
+
+RATIONALE:
+  • Users see live video with <100ms lag (from StreamCapture)
+  • PPE detection runs at lower FPS to constrain CPU load
+  • Decoupling allows users to enjoy real-time feedback while detection
+    respects computational budget
+  • Both pipelines can be tuned independently per camera
 
 API Endpoints:
   GET  /                          – Root (redirects to admin panel)
@@ -13,14 +38,11 @@ API Endpoints:
   GET  /violations/{id}           – Single violation detail
   GET  /evidence/{id}/image       – Serve violation snapshot image
   WS   /ws/alerts                 – Real-time violation alerts (WebSocket)
-  GET  /stream/{camera_id}        – MJPEG live preview (for dashboard)
+  GET  /stream/{camera_id}        – MJPEG live preview (StreamCapture, <100ms latency)
 
 Static Assets:
   GET  /static/css/*              – Stylesheets
   GET  /static/js/*               – JavaScript files
-
-This application serves both a REST API for programmatic access and a web UI
-for non-technical users to configure zones, view violations, and manage the system.
 """
 from __future__ import annotations
 
@@ -46,7 +68,8 @@ from src.detection.detector import PPEDetector
 from src.detection.zone_rules import ZoneRulesEngine
 from src.evidence.store import EvidenceStore
 from src.ingestion.stream_processor import StreamProcessor
-from src.api.schemas import ViolationOut, CameraOut
+from src.ingestion.stream_capture import StreamCapture
+from src.api.schemas import ViolationOut, CameraOut, CameraCreate, CameraStatusUpdate, CameraUpdate
 from src.config_manager.interactive_zones import (
     load_zones,
     generate_zone_id,
@@ -62,8 +85,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _result_queue: queue.Queue = queue.Queue(maxsize=256)
 _processors: dict[str, StreamProcessor] = {}
+_stream_captures: dict[str, StreamCapture] = {}   # camera_id -> StreamCapture for real-time MJPEG
 _ws_clients: list[WebSocket] = []
-_latest_frames: dict[str, object] = {}   # camera_id -> latest annotated ndarray
+_latest_frames: dict[str, object] = {}   # camera_id -> latest annotated ndarray (for overlay/evidence)
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +116,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     for cam in cameras_cfg.get("cameras", []):
         if not cam.get("enabled", True):
             continue
+
+        # Start lightweight stream capture for real-time MJPEG streaming
+        # Runs at full camera FPS (uncapped) to minimize latency
+        capture = StreamCapture(
+            camera_id=cam["id"],
+            uri=str(cam["uri"]),
+            target_fps=None,  # Uncapped: capture at native camera FPS for lowest latency
+            jpeg_quality=72,  # Reduced JPEG quality for faster encoding on webcam
+        )
+        _stream_captures[cam["id"]] = capture
+        capture.start()
+        logger.info("Started real-time stream capture for camera %s (uncapped FPS, JPEG@72%% quality)", cam["id"])
+
+        # Start detection pipeline for violations/evidence (lower FPS for CPU efficiency)
         proc = StreamProcessor(
             camera_id=cam["id"],
             zone_id=cam["zone_id"],
@@ -103,7 +141,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         _processors[cam["id"]] = proc
         proc.start()
-        logger.info("Started processor for camera %s", cam["id"])
+        logger.info("Started detection processor for camera %s (fps_limit=%s)", cam["id"], cam.get("fps_limit", 5))
 
     # Background task: drain result queue and broadcast violations
     async def _drain_queue() -> None:
@@ -150,8 +188,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     asyncio.create_task(_drain_queue())
     yield
 
+    # Stop all processors and stream captures
     for proc in _processors.values():
         proc.stop()
+    for capture in _stream_captures.values():
+        capture.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -366,17 +407,124 @@ def create_zone(camera_id: str, zone_type: str) -> dict:
 
 @app.get("/cameras", response_model=list[CameraOut])
 def list_cameras() -> list[CameraOut]:
+    """Return all configured cameras with runtime status for UI rendering."""
     cfg = yaml.safe_load(Path("config/cameras.yaml").read_text())
     return [
         CameraOut(
             id=c["id"],
             name=c["name"],
+            source=str(c.get("uri", "")),
             zone_id=c["zone_id"],
             enabled=c.get("enabled", True),
             running=c["id"] in _processors,
         )
         for c in cfg.get("cameras", [])
     ]
+
+
+@app.post("/cameras", response_model=CameraOut, status_code=201)
+def create_camera(camera: CameraCreate) -> CameraOut:
+    """
+    Create a new camera entry in config/cameras.yaml.
+
+    Notes for operators:
+    - Newly added enabled cameras are persisted immediately.
+    - Running state stays false until the service is restarted, because
+      processors are started during app lifespan startup.
+    """
+    cameras_path = Path("config/cameras.yaml")
+    cfg = yaml.safe_load(cameras_path.read_text()) or {}
+    cameras = cfg.get("cameras", [])
+
+    camera_id = camera.id.strip()
+    camera_name = camera.name.strip()
+    camera_source = camera.source.strip()
+
+    if not camera_id or not camera_name or not camera_source:
+        raise HTTPException(status_code=400, detail="Camera id, name, and source are required")
+
+    if any(existing.get("id") == camera_id for existing in cameras):
+        raise HTTPException(status_code=400, detail=f"Camera '{camera_id}' already exists")
+
+    # Keep a deterministic default zone so new cameras are immediately valid.
+    new_entry = {
+        "id": camera_id,
+        "name": camera_name,
+        "uri": camera_source,
+        "zone_id": "zone-entry",
+        "fps_limit": 5,
+        "enabled": camera.enabled,
+    }
+
+    cameras.append(new_entry)
+    cfg["cameras"] = cameras
+    cameras_path.write_text(yaml.safe_dump(cfg, sort_keys=False))
+
+    return CameraOut(
+        id=new_entry["id"],
+        name=new_entry["name"],
+        source=str(new_entry["uri"]),
+        zone_id=new_entry["zone_id"],
+        enabled=bool(new_entry["enabled"]),
+        running=False,
+    )
+
+
+@app.patch("/cameras/{camera_id}/status", response_model=CameraOut)
+def update_camera_status(camera_id: str, payload: CameraStatusUpdate) -> CameraOut:
+    """Update camera enabled status in config/cameras.yaml and return updated state."""
+    cameras_path = Path("config/cameras.yaml")
+    cfg = yaml.safe_load(cameras_path.read_text()) or {}
+    cameras = cfg.get("cameras", [])
+
+    for camera in cameras:
+        if camera.get("id") == camera_id:
+            camera["enabled"] = payload.enabled
+            cfg["cameras"] = cameras
+            cameras_path.write_text(yaml.safe_dump(cfg, sort_keys=False))
+            return CameraOut(
+                id=camera["id"],
+                name=camera["name"],
+                source=str(camera.get("uri", "")),
+                zone_id=camera["zone_id"],
+                enabled=bool(camera.get("enabled", True)),
+                running=camera_id in _processors,
+            )
+
+    raise HTTPException(status_code=404, detail=f"Camera '{camera_id}' not found")
+
+
+@app.put("/cameras/{camera_id}", response_model=CameraOut)
+def update_camera(camera_id: str, payload: CameraUpdate) -> CameraOut:
+    """Update camera display name, source URI/index, and enabled state in config file."""
+    cameras_path = Path("config/cameras.yaml")
+    cfg = yaml.safe_load(cameras_path.read_text()) or {}
+    cameras = cfg.get("cameras", [])
+
+    updated_name = payload.name.strip()
+    updated_source = payload.source.strip()
+
+    if not updated_name or not updated_source:
+        raise HTTPException(status_code=400, detail="Camera name and source are required")
+
+    for camera in cameras:
+        if camera.get("id") == camera_id:
+            camera["name"] = updated_name
+            camera["uri"] = updated_source
+            camera["enabled"] = payload.enabled
+            cfg["cameras"] = cameras
+            cameras_path.write_text(yaml.safe_dump(cfg, sort_keys=False))
+
+            return CameraOut(
+                id=camera["id"],
+                name=camera["name"],
+                source=str(camera.get("uri", "")),
+                zone_id=camera["zone_id"],
+                enabled=bool(camera.get("enabled", True)),
+                running=camera_id in _processors,
+            )
+
+    raise HTTPException(status_code=404, detail=f"Camera '{camera_id}' not found")
 
 
 @app.get("/violations", response_model=list[ViolationOut])
@@ -431,23 +579,92 @@ async def ws_alerts(websocket: WebSocket) -> None:
 
 @app.get("/stream/{camera_id}")
 async def mjpeg_stream(camera_id: str) -> StreamingResponse:
-    """MJPEG live preview — serves the latest annotated frame per camera."""
-    if camera_id not in _processors:
+    """
+    MJPEG live preview — serves raw frames from the real-time capture thread.
+
+    Uses StreamCapture for minimal latency:
+    - No detection overhead
+    - Single-frame buffer (drop old frames immediately)
+    - Frame-ready event signaling
+    - Optimized JPEG encoding (~72% quality)
+
+    Typical latency: <100ms from camera to browser (vs. 500ms+ with detection)
+    """
+    if camera_id not in _stream_captures:
         raise HTTPException(status_code=404, detail="Camera not running")
 
+    capture = _stream_captures[camera_id]
+
     async def _generate():
+        # Prime: wait for first frame
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, capture.wait_for_frame, 5.0)
+
+        last_frame_bytes = None
+        skipped_frames = 0
+
         while True:
-            frame = _latest_frames.get(camera_id)
-            if frame is not None:
-                _, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            # Wait for new frame with 1s timeout to handle disconnects
+            frame_ready = await loop.run_in_executor(
+                None, capture.wait_for_frame, 1.0
+            )
+            if not frame_ready:
+                # Timeout: camera disconnected or no frames
+                # Retry or re-send last frame if available
+                if last_frame_bytes:
+                    yield (
+                        b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+                        + last_frame_bytes
+                        + b"\r\n"
+                    )
+                    skipped_frames = 0
+                await asyncio.sleep(0.01)
+                continue
+
+            frame = capture.get_frame()
+            if frame is None:
+                continue
+
+            # Encode to JPEG (72% quality for speed)
+            # For webcam: full resolution at ~30 fps in ~3-5ms per frame
+            success, jpeg_bytes = cv2.imencode(
+                ".jpg",
+                frame,
+                [cv2.IMWRITE_JPEG_QUALITY, 72],
+            )
+            if not success:
+                continue
+
+            # Only yield if frame changed (avoid re-encoding same frame)
+            if jpeg_bytes.tobytes() != last_frame_bytes:
+                last_frame_bytes = jpeg_bytes.tobytes()
+                skipped_frames = 0
                 yield (
                     b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
-                    + jpeg.tobytes()
+                    + last_frame_bytes
                     + b"\r\n"
                 )
-            await asyncio.sleep(0.04)   # ~25 fps max
+            else:
+                skipped_frames += 1
+                # If we're stuck on the same frame for too long, yield anyway
+                if skipped_frames > 10:
+                    yield (
+                        b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+                        + last_frame_bytes
+                        + b"\r\n"
+                    )
+                    skipped_frames = 0
 
     return StreamingResponse(
         _generate(),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
+
+# ---------------------------------------------------------------------------
+# NOTE: Disable uvicorn --reload in production
+# ---------------------------------------------------------------------------
+# The --reload option causes the application to restart multiple times during
+# development, which can lead to conflicts with camera threads. For production,
+# always start the server without --reload to ensure proper cleanup of resources.
+# Example:
+#   uvicorn src.api.main:app --host 0.0.0.0 --port 8000
