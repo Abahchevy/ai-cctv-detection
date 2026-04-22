@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <!--
+    PPE Compliance System — Admin Zone Configuration Base Template
+
+    This is the base template that other pages extend.
+    Provides common structure, styling, and JavaScript utilities.
+    -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}PPE Compliance — Zone Configuration{% endblock %}</title>
+
+    <!-- Styling -->
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}">
+
+    <!-- Additional block for page-specific styles -->
+    {% block extra_css %}{% endblock %}
+</head>
+
+<body>
+    <!-- Main content container -->
+    <div class="container">
+        <!-- Header section -->
+        <header>
+            {% block header %}
+            <h1>🔧 Zone Configuration</h1>
+            <p>Create PPE compliance zones for your cameras</p>
+            {% endblock %}
+        </header>
+
+        <!-- Alert messages (success, error, info) -->
+        <div id="alerts-container"></div>
+
+        <!-- Main content block -->
+        {% block content %}
+        <!-- Child templates override this block -->
+        {% endblock %}
+    </div>
+
+    <!-- JavaScript utilities -->
+    <script>
+        /**
+         * Utility Functions for Zone Configuration UI
+         *
+         * These functions handle API communication, UI updates, and state management.
+         * Designed to be minimal and easily extended for future features.
+         */
+
+        /**
+         * Display alert message to user
+         *
+         * @param {string} message - Alert text to display
+         * @param {string} type - Alert type: 'success', 'error', or 'info'
+         * @param {number} duration - Auto-dismiss after N milliseconds (0 = no auto-dismiss)
+         */
+        function showAlert(message, type = 'info', duration = 5000) {
+            const container = document.getElementById('alerts-container');
+            const alertDiv = document.createElement('div');
+
+            // Map alert types to icons
+            const icons = {
+                'success': '✅',
+                'error': '❌',
+                'info': 'ℹ️'
+            };
+
+            alertDiv.className = `alert alert-${type} visible`;
+            alertDiv.innerHTML = `
+                <span class="alert-icon">${icons[type]}</span>
+                <span>${message}</span>
+            `;
+
+            container.appendChild(alertDiv);
+
+            // Auto-dismiss if duration > 0
+            if (duration > 0) {
+                setTimeout(() => {
+                    alertDiv.remove();
+                }, duration);
+            }
+
+            // Scroll to alert
+            alertDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        /**
+         * Make API request with error handling
+         *
+         * @param {string} url - API endpoint URL
+         * @param {object} options - Fetch options (method, headers, body, etc.)
+         * @returns {Promise} Response JSON if successful, throws error otherwise
+         */
+        async function apiRequest(url, options = {}) {
+            try {
+                const response = await fetch(url, {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    },
+                    ...options
+                });
+
+                if (!response.ok) {
+                    const error = await response.json().catch(() => ({}));
+                    throw new Error(error.detail || `HTTP ${response.status}`);
+                }
+
+                // Handle empty responses (e.g., 204 No Content)
+                if (response.status === 204) {
+                    return null;
+                }
+
+                return await response.json();
+            } catch (error) {
+                console.error('API request failed:', error);
+                showAlert(`Error: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        /**
+         * Disable all form inputs
+         *
+         * Useful during loading/submission to prevent double-submission
+         *
+         * @param {boolean} disabled - Set disabled state
+         */
+        function setFormDisabled(disabled) {
+            const inputs = document.querySelectorAll('select, input[type="text"], button');
+            inputs.forEach(input => {
+                input.disabled = disabled;
+            });
+        }
+
+        /**
+         * Update button loading state
+         *
+         * Shows spinner while loading, restores text when done
+         *
+         * @param {HTMLElement} button - Button element to update
+         * @param {boolean} isLoading - Loading state
+         */
+        function setButtonLoading(button, isLoading) {
+            if (isLoading) {
+                button.dataset.originalText = button.textContent;
+                button.innerHTML = '<span class="loading"></span>Creating...';
+                button.disabled = true;
+            } else {
+                button.textContent = button.dataset.originalText || 'Create Zone';
+                button.disabled = false;
+            }
+        }
+
+        /**
+         * Format zone type name for display
+         *
+         * @param {string} name - Zone type name
+         * @returns {string} Formatted name with description
+         */
+        function formatZoneType(name, description = '') {
+            return description ? `${name} — ${description}` : name;
+        }
+    </script>
+
+    <!-- Page-specific scripts block -->
+    {% block scripts %}{% endblock %}
+</body>
+
+</html>

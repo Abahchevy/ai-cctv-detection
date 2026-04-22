@@ -1,32 +1,52 @@
-# Zone-specific PPE requirements
-# Each zone lists the PPE items that MUST be worn by every detected person.
-# Violations are raised when a required item is absent.
-
 zones:
   zone-entry:
-    name: "General Entry / Site Boundary"
+    name: General Entry / Site Boundary
     required_ppe:
-      - hard_hat
+    - hard_hat
     alert_cooldown_seconds: 30
-
   zone-welding:
-    name: "Welding Bay"
+    name: Welding Bay
     required_ppe:
-      - hard_hat
+    - hard_hat
     alert_cooldown_seconds: 15
-
   zone-chemical:
-    name: "Chemical Storage / Handling"
+    name: Chemical Storage / Handling
     required_ppe:
-      - hard_hat
+    - hard_hat
     alert_cooldown_seconds: 15
-
-# keremberke/yolov8m-hard-hat-detection class names:
-#   helmet = person wearing hard hat  -> maps to hard_hat (PPE present)
-#   head   = person with bare head    -> unmapped (absence of helmet = violation)
-#   person = full-body person bounding box
+  cam-001-high-hazard:
+    name: "High Hazard \u2014 cam-001"
+    required_ppe:
+    - hard_hat
+    - vest
+    - gloves
+    alert_cooldown_seconds: 15
+    camera_id: cam-001
+  cam-test-medium-hazard:
+    name: "Medium Hazard \u2014 cam-test"
+    required_ppe:
+    - hard_hat
+    - vest
+    alert_cooldown_seconds: 30
+    camera_id: cam-test
+  cam-002-high-hazard:
+    name: "High Hazard \u2014 cam-002"
+    required_ppe:
+    - hard_hat
+    - vest
+    - gloves
+    alert_cooldown_seconds: 15
+    camera_id: cam-002
+  cam-test-high-hazard:
+    name: "High Hazard \u2014 cam-test"
+    required_ppe:
+    - hard_hat
+    - vest
+    - gloves
+    alert_cooldown_seconds: 15
+    camera_id: cam-test
 class_map:
-  "helmet": hard_hat
-  "hard hat": hard_hat
-  "hardhat": hard_hat
-  "person": person
+  helmet: hard_hat
+  hard hat: hard_hat
+  hardhat: hard_hat
+  person: person
